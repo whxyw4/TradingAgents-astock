@@ -27,6 +27,12 @@ DEFAULT_CONFIG = {
     "anthropic_effort": None,           # "high", "medium", "low"
     # Checkpoint/resume: when True, LangGraph saves state after each node
     # so a crashed run can resume from the last successful step.
+    # SSL verification for LLM API connections. When False, skips certificate
+    # verification (useful behind corporate proxies / SSL-intercepting firewalls).
+    # Can also be set via environment variable: SSL_VERIFY=false
+    "ssl_verify": os.getenv("SSL_VERIFY", "true").lower() not in ("false", "0", "no"),
+    # Checkpoint/resume: when True, LangGraph saves state after each node
+    # so a crashed run can resume from the last successful step.
     "checkpoint_enabled": False,
     # Output language for analyst reports and final decision
     # Internal agent debate stays in English for reasoning quality

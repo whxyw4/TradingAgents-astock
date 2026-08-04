@@ -107,6 +107,7 @@ class DeepSeekChatOpenAI(NormalizedChatOpenAI):
 _PASSTHROUGH_KWARGS = (
     "timeout", "max_retries", "reasoning_effort",
     "api_key", "callbacks", "http_client", "http_async_client",
+    "ssl_verify",
 )
 
 # Provider base URLs and API key env vars
@@ -173,6 +174,14 @@ class OpenAIClient(BaseLLMClient):
         for key in _PASSTHROUGH_KWARGS:
             if key in self.kwargs:
                 llm_kwargs[key] = self.kwargs[key]
+
+        # SSL verification control: when disabled, create a custom httpx
+        # client that skips certificate validation (for corporate proxies,
+        # SSL-intercepting firewalls, WattToolkit/Steam++ etc.).
+        ssl_verify = llm_kwargs.pop("ssl_verify", True)
+        if not ssl_verify and "http_client" not in llm_kwargs:
+            import httpx
+            llm_kwargs["http_client"] = httpx.Client(verify=False)
 
         # Native OpenAI: use Responses API for consistent behavior across
         # all model families. Third-party providers use Chat Completions.

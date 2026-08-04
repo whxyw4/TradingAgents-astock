@@ -158,6 +158,11 @@ class TradingAgentsGraph:
             if effort:
                 kwargs["effort"] = effort
 
+        # SSL verification toggle (applies to all providers that use httpx)
+        ssl_verify = self.config.get("ssl_verify", True)
+        if not ssl_verify:
+            kwargs["ssl_verify"] = False
+
         return kwargs
 
     def _create_tool_nodes(self) -> Dict[str, ToolNode]:
