@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import date
 
 import streamlit as st
@@ -27,6 +28,7 @@ _PROVIDERS: list[tuple[str, str]] = [
     ("Google Gemini", "google"),
     ("xAI Grok", "xai"),
     ("OpenRouter（聚合·填 vendor/model 形式 ID）", "openrouter"),
+    ("OpenAI 兼容（自定义 base_url·9Router/AI Router/自建代理）", "openai_compatible"),
     ("Ollama（本地）", "ollama"),
 ]
 
@@ -175,20 +177,71 @@ def _render_llm_config() -> None:
         st.session_state["quick_think_llm"] = custom_quick
         st.session_state["deep_think_llm"] = custom_deep
 
+    base_url_required = provider_key == "openai_compatible"
     st.text_input(
-        "API Base URL（第三方/代理，可选）",
+        "API Base URL（第三方/代理" + ("·必填" if base_url_required else "，可选") + "）",
         key="llm_base_url",
-        placeholder="例: https://your-proxy.com/v1",
+        placeholder="例: https://your-relay.example/v1",
         help=(
-            "通过第三方中转/代理访问 Claude、OpenAI 等模型时填写网关地址；"
-            "留空则用所选供应商的官方地址。API Key 仍从 .env 读取，"
-            "且每个供应商用各自的环境变量——"
+            "通过第三方中转/代理访问模型时填写网关地址；留空则用所选供应商的官方地址。"
+            "API Key 仍从 .env 读取，每个供应商用各自的环境变量——"
             "OpenAI=OPENAI_API_KEY、DeepSeek=DEEPSEEK_API_KEY、"
             "通义=DASHSCOPE_API_KEY、智谱=ZHIPU_API_KEY、MiniMax=MINIMAX_API_KEY、"
-            "Claude=ANTHROPIC_API_KEY、OpenRouter=OPENROUTER_API_KEY、xAI=XAI_API_KEY。"
+            "Claude=ANTHROPIC_API_KEY、OpenRouter=OPENROUTER_API_KEY、xAI=XAI_API_KEY、"
+            "OpenAI 兼容（自定义）=OPENAI_COMPATIBLE_API_KEY（也接受 OPENAI_API_KEY）。"
             "也可在 .env 里设 BACKEND_URL 代替此处。"
         ),
     )
+    if base_url_required:
+        st.caption(
+            "已选「OpenAI 兼容（自定义）」：**Base URL 必填**（你的网关，走标准 Chat "
+            "Completions），模型 ID 手动填写，Key 在 .env 设 `OPENAI_COMPATIBLE_API_KEY`。"
+        )
+
+    # ── 个人 Claude 订阅额度（可选，仅个人自用）────────────────────────
+    _scope_labels = [
+        "关闭（走上面选的供应商）",
+        "仅深度节点（Research/Portfolio）",
+        "所有节点（含 7 个工具分析师）",
+    ]
+    _scope_values = ["off", "deep", "all"]
+    scope_idx = st.selectbox(
+        "个人 Claude 订阅覆盖 (Agent SDK)",
+        range(len(_scope_labels)),
+        format_func=lambda i: _scope_labels[i],
+        key="subscription_scope_idx",
+        help=(
+            "让部分/全部节点经 Claude Agent SDK 走你个人 Pro/Max 订阅额度，"
+            "而非按 token 计费。「所有节点」含 7 个工具分析师（其工具调用已桥接到订阅）。"
+            "需装 [agentsdk] 依赖，且本机 claude 已登录（或设 CLAUDE_CODE_OAUTH_TOKEN）。"
+        ),
+    )
+    scope = _scope_values[scope_idx]
+    st.session_state["subscription_scope"] = scope
+    if scope != "off":
+        # 用别名而非写死版本号：claude CLI 的 opus/sonnet 恒指向最新模型。
+        st.session_state.setdefault("agent_sdk_model", "opus")
+        st.text_input(
+            "订阅使用的 Claude 模型",
+            key="agent_sdk_model",
+            help=(
+                "填别名 opus / sonnet（恒指向最新模型，推荐）或完整模型 id。"
+                "撞额度/失败时自动降级到上面选的供应商 + 对应模型。"
+            ),
+        )
+        if scope == "all":
+            st.caption(
+                "⚠️ 「所有节点」会把 7 个分析师 + 多空/交易员/风险辩手全部压到订阅上，"
+                "订阅是按额度限流的，跑几轮就可能撞上限。可在 config 里把 "
+                "`agent_sdk_quick_model` 设为 `sonnet` 降低消耗（默认已是）。"
+            )
+        if os.getenv("ANTHROPIC_API_KEY"):
+            st.info(
+                "检测到 ANTHROPIC_API_KEY。它**不会**泄进 Agent SDK 子进程"
+                "（已在子进程环境显式置空），所以订阅额度照常生效；"
+                "父进程保留它，是为了让 `anthropic` 仍能作为撞额度后的降级 provider。"
+                "如果你并不打算保留付费降级，可在 .env 里清掉它。"
+            )
 
 
 def render_sidebar() -> None:
@@ -224,6 +277,18 @@ def render_sidebar() -> None:
         value=date.today(),
         key="input_date",
     )
+
+    start_date = st.date_input(
+        "数据起始日期",
+        value=trade_date.replace(day=1),   # 默认本月第一天
+        key="input_start_date",
+        help="技术分析回溯到该日期（默认本月第一天）。分析区间 = 起始日期 → 分析日期，"
+             "用于「按月」或自定义时段分析；留默认即分析当月至今。",
+    )
+    # 分析窗口天数 → market_lookback_days（下限 5 天，保证指标有意义）
+    st.session_state["market_lookback_days"] = max((trade_date - start_date).days, 5)
+    if start_date >= trade_date:
+        st.caption("⚠️ 起始日期应早于分析日期，已按最小窗口（5 天）处理。")
 
     with st.expander("⚙️ 模型配置", expanded=False):
         _render_llm_config()
